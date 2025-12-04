@@ -416,36 +416,6 @@ input[type=number]::-webkit-outer-spin-button {
       return scaleW;
     }
 
-    // Helper: responsive edge gap (smaller on small screens)
-    function computeEdgeGap() {
-      const pagePadding = parseFloat(getCSSVariable('--page-padding')) || 12;
-      if (window.innerWidth <= 480) return Math.max(6, pagePadding * 0.25);
-      if (window.innerWidth <= 768) return Math.max(8, pagePadding * 0.5);
-      return pagePadding;
-    }
-
-    // Adjust viewerContainer paddings to account for scrollbar and small screens
-    function adjustContainerPaddingForScrollbar() {
-      if (!viewerContainer) return;
-      const pagePadding = parseFloat(getCSSVariable('--page-padding')) || 12;
-      // scrollbar width (includes layout scrollbars)
-      const scrollbarWidth = Math.max(0, viewerContainer.offsetWidth - viewerContainer.clientWidth);
-      const extraRight = Math.max(12, scrollbarWidth); // keep some breathing room next to scrollbar
-      // reduce left padding on small screens to maximize page width
-      const leftPad = window.innerWidth <= 600 ? Math.max(4, pagePadding * 0.5) : pagePadding;
-      viewerContainer.style.paddingLeft = leftPad + 'px';
-      viewerContainer.style.paddingRight = (pagePadding + extraRight) + 'px';
-    }
-    
-    // Call adjustContainerPaddingForScrollbar on resize and when layout changes
-    window.addEventListener('resize', () => {
-      adjustContainerPaddingForScrollbar();
-      if (pdfDoc) {
-        // small debounce-ish safe call
-        setTimeout(() => { setPageView(pageViewMode); }, 60);
-      }
-    });
-
     // Set page view mode and ensure maximum two columns. Do not allow more-than-two columns by using fixed grid.
     async function setPageView(mode) {
       pageViewMode = mode === 'two' ? 'two' : 'single';
@@ -482,7 +452,7 @@ input[type=number]::-webkit-outer-spin-button {
           const containerStyle = window.getComputedStyle(viewerContainer);
           const containerPaddingH = (parseFloat(containerStyle.paddingLeft) || 0) + (parseFloat(containerStyle.paddingRight) || 0);
           const containerWidth = Math.max(1, viewerContainer.clientWidth - containerPaddingH);
-          const edgeGap = computeEdgeGap();
+          const edgeGap = parseFloat(getCSSVariable('--page-padding')) || 12;
           const containerWidthForScale = Math.max(1, containerWidth - edgeGap);
 
           let singleScale = containerWidthForScale / base.width;
@@ -636,10 +606,11 @@ input[type=number]::-webkit-outer-spin-button {
             const maxScale = (MAX_ZOOM_PCT / 100);
             setScale(Math.max(minScale, Math.min(maxScale, twoScale)));
           } else {
+            // single page: compute fit-to-width but leave a small edge gap so it won't touch scrollbar
             const containerStyle = window.getComputedStyle(viewerContainer);
             const containerPaddingH = (parseFloat(containerStyle.paddingLeft) || 0) + (parseFloat(containerStyle.paddingRight) || 0);
             const containerWidth = Math.max(1, viewerContainer.clientWidth - containerPaddingH);
-            const edgeGap = computeEdgeGap();
+            const edgeGap = parseFloat(getCSSVariable('--page-padding')) || 12;
             const containerWidthForScale = Math.max(1, containerWidth - edgeGap);
             const firstPage = await pdfDoc.getPage(1);
             const vp = firstPage.getViewport({ scale: 1.0, rotation: currentRotation });
@@ -781,30 +752,35 @@ input[type=number]::-webkit-outer-spin-button {
 
       // Get gap values from CSS variables
       const pagePadding = parseFloat(getCSSVariable('--page-padding')) || 12;
-      // compute a responsive edge gap so single-page fit doesn't leave large margins on small screens
-      const edgeGap = computeEdgeGap();
-
-      // Ensure container padding accounts for scrollbar / small screens before measuring
-      adjustContainerPaddingForScrollbar();
-
-      // Get page base size (was missing — caused ReferenceError)
-      const base = await getFirstPageBaseSize();
-      const pageBaseWidth = base.width || 612;
-      const pageBaseHeight = base.height || 792;
-
+      // container width is computed later from computed style to include actual padding/scrollbar,
+      // so don't declare it twice here.
+      // const containerWidth = viewerContainer.clientWidth - (pagePadding * 2);
+      
+      // compute actual page width at scale=1 with current rotation so baseline (fit-to-width) shows 100%
+      let pageBaseWidth = 612; // fallback common PDF page width
+      try {
+        const firstPageForScale = await pdfDoc.getPage(1);
+        const vp = firstPageForScale.getViewport({ scale: 1.0, rotation: currentRotation });
+        pageBaseWidth = vp.width || pageBaseWidth;
+      } catch (err) {
+        console.warn('Could not read first page for baseline width, using fallback', err);
+      }
+      // Compute container inner width properly by subtracting container paddings (read from computed style)
       const containerStyle = window.getComputedStyle(viewerContainer);
       const containerPaddingH = (parseFloat(containerStyle.paddingLeft) || 0) + (parseFloat(containerStyle.paddingRight) || 0);
+      // subtract a small edge gap for single-page fit so page doesn't sit flush to scrollbar
+      const edgeGap = parseFloat(getCSSVariable('--page-padding')) || 12;
       const containerWidth = Math.max(1, viewerContainer.clientWidth - containerPaddingH);
       const containerWidthForScale = Math.max(1, containerWidth - edgeGap);
-      initialScale = 1.0;
+      initialScale = (containerWidthForScale / pageBaseWidth) || 1.0;
+      // Tetapkan currentScale terus ke fit-to-width (buang konsep baseline 100%)
+      initialScale = 1.0; // kekalkan variable untuk backward compat jika perlu
       currentScale = (containerWidthForScale / pageBaseWidth) || 1.0;
       updateZoomDisplay();
       
       // Render all pages
       await renderAllPages();
-      updateScrollBehavior();
-      // adjust padding now that pages are rendered
-      adjustContainerPaddingForScrollbar();
+     updateScrollBehavior();
       
       // Initialize scroll observer to track current page
       initScrollObserver();
@@ -868,9 +844,8 @@ input[type=number]::-webkit-outer-spin-button {
         viewer.style.removeProperty('--two-page-column-width');
       }
       // NOTE: scrollbar behaviour is controlled entirely by CSS now
-      // After pages are updated:
-      adjustContainerPaddingForScrollbar();
-      updateScrollBehavior();
+     // Update scroll behavior (enable horizontal scroll when content wider than container)
+     updateScrollBehavior();
     }
     
     // Toggle horizontal scrolling handled by CSS only — make this a no-op in JS
