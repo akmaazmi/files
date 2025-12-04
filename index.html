@@ -783,6 +783,15 @@ input[type=number]::-webkit-outer-spin-button {
       const pagePadding = parseFloat(getCSSVariable('--page-padding')) || 12;
       // compute a responsive edge gap so single-page fit doesn't leave large margins on small screens
       const edgeGap = computeEdgeGap();
+
+      // Ensure container padding accounts for scrollbar / small screens before measuring
+      adjustContainerPaddingForScrollbar();
+
+      // Get page base size (was missing — caused ReferenceError)
+      const base = await getFirstPageBaseSize();
+      const pageBaseWidth = base.width || 612;
+      const pageBaseHeight = base.height || 792;
+
       const containerStyle = window.getComputedStyle(viewerContainer);
       const containerPaddingH = (parseFloat(containerStyle.paddingLeft) || 0) + (parseFloat(containerStyle.paddingRight) || 0);
       const containerWidth = Math.max(1, viewerContainer.clientWidth - containerPaddingH);
